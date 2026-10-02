@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>トランジスタの動作シミュレーター</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f4f5f8;--fg:#1c2030;--card:#fff;--line:#d5d9e4;--acc:#2f6fed}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12141c;--fg:#e8eaf2;--card:#1c202c;--line:#2e3446;--acc:#5b8dff}}
+:root[data-theme="dark"]{--bg:#12141c;--fg:#e8eaf2;--card:#1c202c;--line:#2e3446;--acc:#5b8dff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,"Hiragino Sans","Noto Sans JP",sans-serif}
+main{max-width:940px;margin:0 auto;padding:14px}
+h1{font-size:1.2rem;margin:4px 0 10px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+.row{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);padding:8px 16px;border-radius:8px;cursor:pointer}
+button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+#sw.on{background:#e8a317;border-color:#e8a317;color:#111}
+input[type=range]{width:220px}
+canvas{width:100%;height:auto;display:block;border-radius:10px;background:#0e1118}
+.out{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.out div{border:1px solid var(--line);border-radius:10px;padding:8px 12px}
+.out b{display:block;font-size:1.4rem}
+small{opacity:.7}
+</style></head><body><main>
+<h1>トランジスタ内部のキャリアの動き</h1>
+<div class="panel row">
+ <span><button id="npn" class="on">NPN</button> <button id="pnp">PNP</button></span>
+ <label>ベース電源 V<sub>BB</sub> <b id="vv">3.0</b> V<br><input id="v" type="range" min="0" max="10" step="0.1" value="3"></label>
+ <label>エミッタ-コレクタ間電圧 V<sub>CE</sub> <b id="vc">5.0</b> V<br><input id="vce" type="range" min="0" max="10" step="0.1" value="5"></label>
+ <button id="sw">電源スイッチ:OFF</button>
+</div>
+<div class="panel"><canvas id="c" width="900" height="500"></canvas>
+ <small>● 青(−)=電子 ／ ● 赤(+)=ホール ／ 黄の矢印=電流(正電荷)の向き。粒子の数は見やすさのため圧縮して表示しています。</small></div>
+<div class="panel out">
+ <div>ベース電流 I<sub>B</sub><b id="ib">0</b></div>
+ <div>コレクタ電流 I<sub>C</sub><b id="ic">0</b></div>
+ <div>エミッタ電流 I<sub>E</sub><b id="ie">0</b></div>
+ <div>動作状態<b id="st">遮断</b></div>
+</div>
+<small>モデル:エミッタ接地。ベース側は V<sub>BB</sub> を R<sub>B</sub>=10kΩ 経由で印加(I<sub>B</sub>=(V<sub>BB</sub>−0.7)/R<sub>B</sub>)、コレクタ側は V<sub>CE</sub> を直接印加。h<sub>FE</sub>=100 で I<sub>C</sub>=h<sub>FE</sub>·I<sub>B</sub>。V<sub>CE</sub> が約0.3V未満になると飽和として I<sub>C</sub> が減ります。</small>
+<script>
+const cv=document.getElementById('c'),g=cv.getContext('2d');
+let type='NPN',on=false,V=3,VCE=5;
+const $=id=>document.getElementById(id);
+const EX0=100,EX1=340,BX1=440,CX1=680,Y0=190,Y1=350;
+let ib=0,ic=0,sat=false;
+function model(){
+  if(!on){ib=ic=0;sat=false;return}
+  ib=Math.max(0,(V-0.7)/10);
+  sat=ib>0&&VCE<0.3;
+  ic=100*ib*Math.min(1,VCE/0.3);
+}
+const fmt=m=>m<=0?'0':(m<1?(m*1000).toFixed(1)+' µA':m.toFixed(2)+' mA');
+function upd(){
+  model();
+  $('ib').textContent=fmt(ib);$('ic').textContent=fmt(ic);$('ie').textContent=fmt(ib+ic);
+  $('st').textContent=!on?'OFF':ib<=0?'遮断':sat?'飽和':'能動';
+}
+$('npn').onclick=()=>{type='NPN';$('npn').classList.add('on');$('pnp').classList.remove('on');reset()};
+$('pnp').onclick=()=>{type='PNP';$('pnp').classList.add('on');$('npn').classList.remove('on');reset()};
+$('v').oninput=e=>{V=+e.target.value;$('vv').textContent=V.toFixed(1);upd()};
+$('vce').oninput=e=>{VCE=+e.target.value;$('vc').textContent=VCE.toFixed(1);upd()};
+$('sw').onclick=()=>{on=!on;$('sw').classList.toggle('on',on);$('sw').textContent='電源スイッチ:'+(on?'ON':'OFF');upd()};
+
+// static carriers
+let bg=[];
+function mk(x0,x1,n,kind){for(let i=0;i<n;i++)bg.push({x:x0+8+Math.random()*(x1-x0-16),y:Y0+8+Math.random()*(Y1-Y0-16),k:kind,ph:Math.random()*6})}
+function reset(){
+  bg=[];parts=[];
+  const emCol=type==='NPN'?'e':'h', bs=type==='NPN'?'h':'e';
+  mk(EX0,EX1,20,emCol);mk(EX1,BX1,7,bs);mk(BX1,CX1,20,emCol);
+  upd();
+}
+let parts=[];
+const P={
+ NPN:{
+  main:[[220,450],[220,290],[340,275],[440,275],[560,290],[560,450]],mk:'e',
+  base:[[375,300],[375,110]],bk:'e',
+  extra:[[405,110],[405,268]],ek:'h'
+ },
+ PNP:{
+  main:[[220,450],[220,290],[340,275],[440,275],[560,290],[560,450]],mk:'h',
+  base:[[375,110],[375,320],[220,320],[220,450]],bk:'e',
+  extra:[[560,450],[560,320],[440,320],[340,320],[280,320]],ek:'e'
+ }
+};
+function spawn(path,k,sp){
+  let L=0;for(let i=1;i<path.length;i++)L+=Math.hypot(path[i][0]-path[i-1][0],path[i][1]-path[i-1][1]);
+  parts.push({path,k,d:0,sp,L});
+}
+function posOf(p){
+  let d=p.d;
+  for(let i=1;i<p.path.length;i++){
+    const a=p.path[i-1],b=p.path[i],l=Math.hypot(b[0]-a[0],b[1]-a[1]);
+    if(d<=l){const t=d/l;return[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]}
+    d-=l;
+  }
+  return p.path[p.path.length-1];
+}
+const rate=I=>I>0.0005?Math.min(22,3*Math.sqrt(I)):0;
+let acc={m:0,b:0,x:0},last=performance.now();
+function step(dt){
+  const c=P[type];
+  acc.m+=rate(ic)*dt;acc.b+=rate(ib)*dt;acc.x+=rate(ib)*dt;
+  while(acc.m>=1){acc.m--;
+    spawn(c.main,c.mk,150);
+    if(type==='PNP')spawn([[560,450],[560,320],[440,320],[340,320],[220,320],[220,450]],'e',150);
+  }
+  while(acc.b>=1){acc.b--;spawn(c.base,c.bk,110)}
+  while(acc.x>=1){acc.x--;if(type==='NPN')spawn(c.extra,'h',90)}
+  for(const p of parts)p.d+=p.sp*dt;
+  parts=parts.filter(p=>p.d<p.L);
+}
+function arrow(x,y,dir){ // dir: 'up'|'down'
+  g.fillStyle='#ffd23f';g.beginPath();
+  const s=dir==='down'?1:-1;
+  g.moveTo(x,y+s*10);g.lineTo(x-7,y-s*4);g.lineTo(x+7,y-s*4);g.fill();
+}
+function draw(t){
+  g.clearRect(0,0,900,500);
+  const N=type==='NPN';
+  const emL=N?'N':'P',baL=N?'P':'N';
+  // regions
+  const regs=[[EX0,EX1,emL,'エミッタ'],[EX1,BX1,baL,'ベース'],[BX1,CX1,emL,'コレクタ']];
+  for(const [a,b,l,nm] of regs){
+    const isN=l==='N';
+    g.fillStyle=isN?'rgba(60,110,255,.16)':'rgba(255,80,80,.16)';
+    g.fillRect(a,Y0,b-a,Y1-Y0);
+    g.strokeStyle='#5a6488';g.strokeRect(a,Y0,b-a,Y1-Y0);
+    g.fillStyle='#9aa6cf';g.font='bold 15px sans-serif';g.textAlign='center';
+    g.fillText(l+'型',(a+b)/2,Y1+22);
+    g.fillText(nm,(a+b)/2,Y0-8+(nm==='ベース'?-90:0));
+  }
+  // depletion
+  const wBE=on&&ib>0?6:18,wBC=!on?18:sat?8:(ib>0?12+VCE*3:18);
+  g.fillStyle='rgba(180,180,190,.35)';
+  g.fillRect(EX1-wBE/2,Y0,wBE,Y1-Y0);g.fillRect(BX1-wBC/2,Y0,wBC,Y1-Y0);
+  g.fillStyle='#b5bbd0';g.font='12px sans-serif';g.fillText('空乏層',EX1-10,Y0+16+140);g.fillText('空乏層',BX1+8,Y0+16+140);
+  // wires
+  g.strokeStyle='#8890aa';g.lineWidth=3;g.lineCap='round';
+  g.beginPath();g.moveTo(220,Y1);g.lineTo(220,450);g.moveTo(560,Y1);g.lineTo(560,450);g.moveTo(390,Y0);g.lineTo(390,110);g.stroke();
+  g.lineWidth=1;
+  // terminal labels
+  g.font='bold 14px sans-serif';g.fillStyle='#e8eaf2';g.textAlign='center';
+  g.fillText('E',220,470);g.fillText('C',560,470);g.fillText('B',390,98);
+  g.font='12px sans-serif';g.fillStyle='#ffd23f';
+  g.fillText(N?'GND':'+VCE',220,488);g.fillText(N?'+VCE':'GND',560,488);g.fillText((N?'+':'−')+'VBB(RB経由)',390,84);
+  // bg carriers
+  for(const b of bg){
+    const x=b.x+Math.sin(t/600+b.ph)*4,y=b.y+Math.cos(t/700+b.ph*1.3)*4;
+    dot(x,y,b.k,4,.35);
+  }
+  // flowing carriers
+  for(const p of parts){const [x,y]=posOf(p);dot(x,y,p.k,6,1)}
+  // current arrows (conventional)
+  if(on&&ib>0){
+    if(N){arrow(432,150,'down');arrow(600,400,'up');arrow(180,400,'down')}
+    else{arrow(180,400,'up');arrow(432,150,'up');arrow(600,400,'down')}
+    g.fillStyle='#ffd23f';g.font='12px sans-serif';g.textAlign='left';
+    g.fillText('I'+'B '+fmt(ib),(N?442:442),152);g.fillText('I'+'C '+fmt(ic),610,404);g.fillText('I'+'E '+fmt(ib+ic),110,404);
+  }
+  // note text
+  g.fillStyle='#b5bbd0';g.font='13px sans-serif';g.textAlign='left';
+  const msg=!on?'スイッチを入れてください':ib<=0?'VBBが0.7V未満:ベース-エミッタ間が順方向にならず電流は流れません':
+   N?'エミッタの電子が薄いベースを通り抜け、大半がコレクタへ。一部はベースのホールと再結合し、ベース端子からも電子が出ていく':
+     'エミッタのホールがベースを通り抜けコレクタへ。電子はコレクタ・ベース端子から入りエミッタ端子へ出ていく';
+  g.fillText(msg,20,28);
+  g.fillText(N?'NPN:電子が主役(エミッタ→コレクタ)':'PNP:ホールが主役(エミッタ→コレクタ)',20,50);
+}
+function dot(x,y,k,r,a){
+  g.globalAlpha=a;g.fillStyle=k==='e'?'#3d7bff':'#ff4d4d';
+  g.beginPath();g.arc(x,y,r,0,7);g.fill();
+  if(r>5){g.fillStyle='#fff';g.font='bold 10px sans-serif';g.textAlign='center';g.fillText(k==='e'?'−':'+',x,y+3.5)}
+  g.globalAlpha=1;
+}
+function loop(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;
+  step(dt);draw(now);requestAnimationFrame(loop);
+}
+reset();requestAnimationFrame(loop);
+</script></main></body></html>
